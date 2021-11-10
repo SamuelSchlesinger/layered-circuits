@@ -1,4 +1,3 @@
-#![feature(map_first_last)]
 use bitvec::vec::BitVec;
 use bitvec::{bitvec};
 use bitvec::order::{LocalBits};
@@ -132,7 +131,25 @@ impl Circuit {
 struct BooleanFn {
     input_size: usize,
     output_size: usize,
-    function: fn(BitVec) -> BitVec,
+    function: fn(&BitVec) -> BitVec,
+}
+
+impl BooleanFn {
+    fn execute(&self, input: &BitVec) -> BitVec {
+        (self.function)(input)
+    }
+
+    fn xor(n: usize) -> Self {
+        BooleanFn {
+            input_size: n,
+            output_size: 1,
+            function: |v| {
+                let mut bv = BitVec::new();
+                bv.push(v.iter().fold(false, |x, b| { x ^ *b }));
+                bv
+            }
+        }
+    }
 }
 
 struct CachedCircuit {
@@ -169,7 +186,7 @@ struct BinaryStrings {
 impl BinaryStrings {
     fn of_length(length: usize) -> Self {
         let mut current = BitVec::with_capacity(length);
-        (1..length).map(|_| { current.push(false); });
+        (1..length).for_each(|_| { current.push(false); });
         BinaryStrings {
             length,
             finished: false,
@@ -227,7 +244,7 @@ impl CachedCircuit {
         }
     }
 
-    fn refines(&mut self, other: &mut CachedCircuit) -> bool {
+    fn refines(&mut self, other: &BooleanFn) -> bool {
         let mut test = true;
         for x in BinaryStrings::of_length(self.circuit.input_size) {
             for y in BinaryStrings::of_length(self.circuit.input_size) {
