@@ -26,6 +26,38 @@ enum Lit<T> {
     NotNot(T),
 }
 
+struct LitIter {
+    input_size: usize,
+    lit: Lit<usize>,
+    finished: bool,
+}
+
+impl Iterator for LitIter {
+    type Item = Lit<usize>;
+    fn next(self: &mut LitIter) -> Option<Lit<usize>> {
+        if !self.finished {
+            match self.lit {
+                Lit::NotNot(t) => {
+                    self.lit = Lit::Not(t);
+                    Some(Lit::Not(t))
+                },
+                Lit::Not(t) => {
+                    if t >= self.input_size {
+                        self.finished = true;
+                        None
+                    } else {
+                        self.lit = Lit::NotNot(t + 1);
+                        Some(Lit::NotNot(t + 1))
+                    }
+                },
+            }
+        } else {
+            None
+        }
+    }
+}
+
+
 impl<T> Lit<T> {
     /// Sometimes we just want to know which input we're looking at,
     /// not what its sign is
@@ -41,6 +73,14 @@ impl<T> Lit<T> {
         match self {
             Lit::Not(_) => true,
             Lit::NotNot(_) => false,
+        }
+    }
+
+    fn enumerate(input_size: usize) -> LitIter {
+        LitIter {
+            input_size,
+            lit: Lit::NotNot(0),
+            finished: false,
         }
     }
 }
@@ -77,6 +117,14 @@ struct Layer {
 impl Layer {
     fn width(&self) -> usize {
         self.gates.len()
+    }
+
+    fn push_gate(&mut self, gate: Gate) {
+        self.gates.push(gate);
+    }
+
+    fn pop_gate(&mut self) {
+        self.gates.pop();
     }
 
     fn execute(&self, input: &BitVec) -> BitVec {
@@ -158,6 +206,10 @@ struct CachedCircuit {
 }
 
 impl Circuit {
+    fn push_layer(&mut self, layer: Layer) {
+        self.layers.push(layer);
+    }
+
     fn cached(self) -> CachedCircuit {
         CachedCircuit {
             circuit: self,
@@ -172,8 +224,37 @@ impl Circuit {
         }
     }
 
-    fn add_layer(&mut self, layer: Layer) {
-        self.layers.push(layer);
+    fn xor(n: usize) -> Circuit {
+        let mut circuit = Circuit::new(n);
+        let mut m = n;
+        while m != 1 {
+            if m % 2 == 0 {
+                let and_layer = Layer::new((0..m/2).into_iter().flat_map(|i| {
+                    vec![Gate::and(Lit::Not(2 * i), Lit::NotNot(2*i + 1)), Gate::and(Lit::NotNot(2 * i), Lit::Not(2*i + 1))]
+                }
+                ).collect::<Vec<Gate>>());
+                circuit.push_layer(and_layer);
+                let or_layer = Layer::new((0..m/2).into_iter().map(|i| {
+                    Gate::or(Lit::NotNot(2 * i), Lit::NotNot(2 * i + 1))
+                }).collect::<Vec<Gate>>());
+                circuit.push_layer(or_layer);
+                m /= 2;
+            } else {
+                let mut first_layer = Layer::new((0..m - 2).into_iter().map(|i| {
+                    Gate::and(Lit::NotNot(i), Lit::NotNot(i))
+                }).collect::<Vec<Gate>>());
+                first_layer.push_gate(Gate::and(Lit::Not(m - 2), Lit::NotNot(m - 1)));
+                first_layer.push_gate(Gate::and(Lit::NotNot(m - 2), Lit::Not(m - 1)));
+                circuit.push_layer(first_layer);
+                let mut second_layer = Layer::new((0..m - 2).into_iter().map(|i| {
+                    Gate::and(Lit::NotNot(i), Lit::NotNot(i))
+                }).collect::<Vec<Gate>>());
+                second_layer.push_gate(Gate::or(Lit::NotNot(m - 1), Lit::NotNot(m - 2)));
+                circuit.push_layer(second_layer);
+                m -= 1;
+            }
+        }
+        circuit
     }
 }
 
@@ -186,7 +267,7 @@ struct BinaryStrings {
 impl BinaryStrings {
     fn of_length(length: usize) -> Self {
         let mut current = BitVec::with_capacity(length);
-        (1..length).for_each(|_| { current.push(false); });
+        (0..length).for_each(|_| { current.push(false); });
         BinaryStrings {
             length,
             finished: false,
@@ -199,6 +280,7 @@ impl Iterator for BinaryStrings {
     type Item = BitVec;
     fn next(self: &mut BinaryStrings) -> Option<BitVec> {
         if !self.finished {
+            let to_return = self.current.clone();
             let mut iter_mut = self.current.iter_mut();
             let mut incremented = false;
             loop {
@@ -218,10 +300,10 @@ impl Iterator for BinaryStrings {
                 }
             }
             if incremented {
-                Some(self.current.clone())
+                Some(to_return)
             } else {
                 self.finished = true;
-                None
+                Some(to_return)
             }
         } else {
             None
@@ -231,16 +313,20 @@ impl Iterator for BinaryStrings {
 
 impl CachedCircuit {
     fn execute(&mut self, input: &BitVec) -> BitVec {
-        let subcache = self.cache.entry(input.clone()).or_default();
-        if subcache.len() == self.circuit.layers.len() {
-            subcache[subcache.len() - 1].clone()
+        if self.circuit.layers.len() == 0 {
+            input.clone()
         } else {
-            self.circuit.layers[subcache.len()..].iter().fold(input.clone(), |x, v| {
-                let y = v.execute(&x);
-                subcache.push(y.clone());
-                y
-            });
-            subcache[subcache.len() - 1].clone()
+            let subcache = self.cache.entry(input.clone()).or_default();
+            if subcache.len() == self.circuit.layers.len() {
+                subcache[subcache.len() - 1].clone()
+            } else {
+                self.circuit.layers[subcache.len()..].iter().fold(input.clone(), |x, v| {
+                    let y = v.execute(&x);
+                    subcache.push(y.clone());
+                    y
+                });
+                subcache[subcache.len() - 1].clone()
+            }
         }
     }
 
@@ -248,30 +334,93 @@ impl CachedCircuit {
         let mut test = true;
         for x in BinaryStrings::of_length(self.circuit.input_size) {
             for y in BinaryStrings::of_length(self.circuit.input_size) {
-                let sx = self.execute(&x);
-                let sy = self.execute(&y);
-                let ox = other.execute(&x);
-                let oy = other.execute(&y);
-                test = test && ((sx != sy) || (ox == oy));
+                test = test && ((self.execute(&x) != self.execute(&y)) || (other.execute(&x) == other.execute(&x)));
             }
         }
         test
     }
+
+    fn computes(&mut self, other: &BooleanFn) -> bool {
+        BinaryStrings::of_length(self.circuit.input_size()).fold(true, |acc, x| { acc & (self.execute(&x) == other.execute(&x)) })
+    }
+
+    fn pop_layer(&mut self) {
+        let d = self.circuit.layers.len();
+        if self.circuit.layers.len() == 0 {
+            panic!("can't pop layer from circuit without layers");
+        } else {
+            self.circuit.layers.pop();
+            for (k, v) in self.cache.iter_mut() {
+                if v.len() == d {
+                    v.pop();
+                }
+            }
+        }
+    }
+
+    fn push_layer(&mut self, layer: Layer) {
+        self.circuit.push_layer(layer);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_strings() {
+        assert_eq!(
+            BinaryStrings::of_length(1).collect::<Vec<BitVec>>()
+            , vec![ bitvec![LocalBits, usize; 0]
+                  , bitvec![LocalBits, usize; 1]
+            ]);
+        assert_eq!(
+            BinaryStrings::of_length(2).collect::<Vec<BitVec>>()
+            , vec![ bitvec![LocalBits, usize; 0, 0]
+                  , bitvec![LocalBits, usize; 1, 0]
+                  , bitvec![LocalBits, usize; 0, 1]
+                  , bitvec![LocalBits, usize; 1, 1]
+            ]);
+        assert_eq!(
+            BinaryStrings::of_length(3).collect::<Vec<BitVec>>()
+            , vec![ bitvec![LocalBits, usize; 0, 0, 0]
+                  , bitvec![LocalBits, usize; 1, 0, 0]
+                  , bitvec![LocalBits, usize; 0, 1, 0]
+                  , bitvec![LocalBits, usize; 1, 1, 0]
+                  , bitvec![LocalBits, usize; 0, 0, 1]
+                  , bitvec![LocalBits, usize; 1, 0, 1]
+                  , bitvec![LocalBits, usize; 0, 1, 1]
+                  , bitvec![LocalBits, usize; 1, 1, 1]
+            ]);
+    }
+
+    #[test]
+    fn xor_circuit_computes_xor_fn() {
+        let test = |n| {
+            let xor_fn = BooleanFn::xor(n);
+            let mut cached_circuit = Circuit::xor(n).cached();
+            assert!(cached_circuit.computes(&xor_fn));
+        };
+        for i in (1..9).into_iter() {
+            test(i);
+        }
+    }
+
+    #[test]
+    fn xor_circuit_refines_xor_fn() {
+        let test = |n| {
+            let xor_fn = BooleanFn::xor(n);
+            let mut cached_circuit = Circuit::xor(n).cached();
+            for i in (0..cached_circuit.circuit.layers.len()).into_iter() {
+                assert!(cached_circuit.refines(&xor_fn));
+                cached_circuit.pop_layer();
+            }
+        };
+        for i in (1..4).into_iter() {
+            test(i);
+        }
+    }
 }
 
 fn main() {
-    let mut circuit = Circuit::new(2);
-    circuit.add_layer(Layer::new(vec![
-        Gate::and(Lit::Not(0), Lit::NotNot(1)),
-        Gate::and(Lit::NotNot(0), Lit::Not(1)),
-    ]));
-    circuit.add_layer(Layer::new(vec![
-        Gate::or(Lit::NotNot(0), Lit::NotNot(1))
-    ]));
-    let input0 = bitvec![LocalBits, usize; 0, 0];
-    let input1 = bitvec![LocalBits, usize; 0, 1];
-    let mut cached_circuit = circuit.cached();
-    cached_circuit.execute(&input0);
-    cached_circuit.execute(&input1);
-    println!("{:?}", cached_circuit.execute(&input1));
 }
