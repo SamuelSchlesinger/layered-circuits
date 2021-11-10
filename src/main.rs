@@ -213,17 +213,17 @@ impl Iterator for BinaryStrings {
 }
 
 impl CachedCircuit {
-    fn execute(&mut self, input: &BitVec) -> &BitVec {
+    fn execute(&mut self, input: &BitVec) -> BitVec {
         let subcache = self.cache.entry(input.clone()).or_default();
         if subcache.len() == self.circuit.layers.len() {
-            &subcache[subcache.len() - 1]
+            subcache[subcache.len() - 1].clone()
         } else {
             self.circuit.layers[subcache.len()..].iter().fold(input.clone(), |x, v| {
                 let y = v.execute(&x);
                 subcache.push(y.clone());
                 y
             });
-            &subcache[subcache.len() - 1]
+            subcache[subcache.len() - 1].clone()
         }
     }
 
@@ -231,7 +231,11 @@ impl CachedCircuit {
         let mut test = true;
         for x in BinaryStrings::of_length(self.circuit.input_size) {
             for y in BinaryStrings::of_length(self.circuit.input_size) {
-                test = test && (!(self.execute(&x) != self.execute(&y)) || (other.execute(&x) == other.execute(&y)));
+                let sx = self.execute(&x);
+                let sy = self.execute(&y);
+                let ox = other.execute(&x);
+                let oy = other.execute(&y);
+                test = test && ((sx != sy) || (ox == oy));
             }
         }
         test
