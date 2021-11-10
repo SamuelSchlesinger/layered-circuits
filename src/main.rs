@@ -29,7 +29,7 @@ enum Lit<T> {
 impl<T> Lit<T> {
     /// Sometimes we just want to know which input we're looking at,
     /// not what its sign is
-    fn underlying(&self) -> &T {
+    fn unliteral(&self) -> &T {
         match self {
             Lit::Not(t) => t,
             Lit::NotNot(t) => t,
@@ -83,8 +83,8 @@ impl Layer {
         let mut output = BitVec::new();
         for g in &self.gates {
             output.push(g.gate_type.compute(
-                g.gate_inputs.0.negated() ^ input[*g.gate_inputs.0.underlying()],
-                g.gate_inputs.1.negated() ^ input[*g.gate_inputs.1.underlying()],
+                g.gate_inputs.0.negated() ^ input[*g.gate_inputs.0.unliteral()],
+                g.gate_inputs.1.negated() ^ input[*g.gate_inputs.1.unliteral()],
             ));
         }
         output
