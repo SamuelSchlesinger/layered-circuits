@@ -160,12 +160,56 @@ impl Circuit {
     }
 }
 
-fn fill_subcache(circuit: &mut Circuit, subcache: &mut Vec<BitVec>, d: usize, i: &BitVec) {
-    circuit.layers[d..].iter().fold(i.clone(), |x, v| {
-        let y = v.execute(&x);
-        subcache.push(y.clone());
-        y
-    });
+struct BinaryStrings {
+    length: usize,
+    finished: bool,
+    current: BitVec,
+}
+
+impl BinaryStrings {
+    fn of_length(length: usize) -> Self {
+        let mut current = BitVec::with_capacity(length);
+        (1..length).map(|_| { current.push(false); });
+        BinaryStrings {
+            length,
+            finished: false,
+            current,
+        }
+    }
+}
+
+impl Iterator for BinaryStrings {
+    type Item = BitVec;
+    fn next(self: &mut BinaryStrings) -> Option<BitVec> {
+        if !self.finished {
+            let mut iter_mut = self.current.iter_mut();
+            let mut incremented = false;
+            loop {
+                match iter_mut.next() {
+                    Some(mut idx) => {
+                        if *idx {
+                            *idx = false;
+                            continue;
+                        } else {
+                            *idx = true;
+                            incremented = true;
+                            break;
+                        }
+                    },
+                    None => break,
+                    
+                }
+            }
+            if incremented {
+                Some(self.current.clone())
+            } else {
+                self.finished = true;
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 impl CachedCircuit {
@@ -174,9 +218,23 @@ impl CachedCircuit {
         if subcache.len() == self.circuit.layers.len() {
             &subcache[subcache.len() - 1]
         } else {
-            fill_subcache(&mut self.circuit, subcache, subcache.len(), input);
+            self.circuit.layers[subcache.len()..].iter().fold(input.clone(), |x, v| {
+                let y = v.execute(&x);
+                subcache.push(y.clone());
+                y
+            });
             &subcache[subcache.len() - 1]
         }
+    }
+
+    fn refines(&mut self, other: &mut CachedCircuit) -> bool {
+        let mut test = true;
+        for x in BinaryStrings::of_length(self.circuit.input_size) {
+            for y in BinaryStrings::of_length(self.circuit.input_size) {
+                test = test && (!(self.execute(&x) != self.execute(&y)) || (other.execute(&x) == other.execute(&y)));
+            }
+        }
+        test
     }
 }
 
